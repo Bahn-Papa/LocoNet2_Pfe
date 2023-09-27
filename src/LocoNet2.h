@@ -46,7 +46,9 @@
  * 	MRRwA, please contact Copyright Uhlenbrock Elektronik GmbH, for specific permission.
  *
  *****************************************************************************
- * 	DESCRIPTION
+ *
+ * 	DESCRIPTION:
+ *
  * 	This module provides functions that manage the sending and receiving of LocoNet packets.
  *
  * 	As bytes are received from the LocoNet, they are stored in a circular
@@ -64,6 +66,17 @@
  *****************************************************************************/
 
 #pragma once
+
+
+// Uncomment the next line to enable library DEBUG Messages
+//#define DEBUG_OUTPUT
+
+
+//==========================================================================
+//
+//		I N C L U D E S
+//
+//==========================================================================
 
 #include <map>
 
@@ -87,9 +100,6 @@
 // 
 // #include "LocoNetStream.h"
 
-// Uncomment the next line to enable library DEBUG Messages
-#define DEBUG_OUTPUT
-
 #ifdef DEBUG_OUTPUT
 	#include <cstdio>
 	#if defined(ESP32) && ARDUHAL_LOG_LEVEL >= ARDUHAL_LOG_LEVEL_DEBUG
@@ -105,38 +115,14 @@
 	#define DEBUG_ISR(format, ...)
 #endif
 
-typedef enum
-{
-    LN_IDLE = 0, LN_NETWORK_BUSY, LN_CD_BACKOFF, LN_PRIO_BACKOFF, LN_COLLISION, LN_UNKNOWN_ERROR, LN_RETRY_ERROR
-} LN_STATUS;
 
+//==========================================================================
+//
+//		D E F I N I T I O N S
+//
+//==========================================================================
 
-using LocoNetBus = Bus<LnMsg, LN_STATUS, LN_STATUS::LN_IDLE, 10>;
-
-using LocoNetConsumer = Consumer<LnMsg, LN_STATUS>;
-
-constexpr int LOCONET_BAUD = 16667; // LocoNet BAUD Rate
-constexpr int LOCONET_BREAK_BAUD = 9600; // LocoNet BAUD Rate
-
-// CD Backoff starts after the Stop Bit (Bit 9) and has a minimum or 20 Bit Times
-// but initially starts with an additional 20 Bit Times
-constexpr uint8_t LN_CARRIER_TICKS      = 20; // carrier detect backoff - all devices have to wait this
-constexpr uint8_t LN_MASTER_DELAY       = 6;  // non master devices have to wait this additionally
-constexpr uint8_t LN_INITIAL_PRIO_DELAY = 20; // initial attempt adds priority delay
-constexpr uint8_t LN_BACKOFF_MIN        = (LN_CARRIER_TICKS + LN_MASTER_DELAY);      // not going below this
-constexpr uint8_t LN_BACKOFF_INITIAL    = (LN_BACKOFF_MIN + LN_INITIAL_PRIO_DELAY);  // for the first normal tx attempt
-constexpr uint8_t LN_BACKOFF_MAX        = (LN_BACKOFF_INITIAL + 10);                 // lower priority is not supported
-constexpr uint8_t LN_COLLISION_TICKS    = 15; //< after collision the bus will be low for this number of ticks.
-
-// number of microseconds for one bit
-constexpr uint8_t LocoNetTickTime = 60;
-constexpr uint16_t LocoNetRxByteMicros = LocoNetTickTime * 10;	// StartBit + 8 Data Bits + StopBit = 10 Bits
-
-// number of microseconds to remain in a collision state
-constexpr uint32_t CollisionTimeoutIncrement = 15 * LocoNetTickTime;
-
-// number of microseconds to remain in a CD BACKOFF state
-constexpr uint32_t CDBackoffTimeoutIncrement = LocoNetTickTime * LN_CARRIER_TICKS;
+#define MAX_BACKEND_CONSUMERS  10
 
 //
 // LNCV error codes
@@ -144,57 +130,207 @@ constexpr uint32_t CDBackoffTimeoutIncrement = LocoNetTickTime * LN_CARRIER_TICK
 //
 
 // Error-codes for write-requests
-#define LNCV_LACK_ERROR_GENERIC (0)
+#define LNCV_LACK_ERROR_GENERIC			(0)
 // Unsupported/non-existing CV
-#define LNCV_LACK_ERROR_UNSUPPORTED (1)
+#define LNCV_LACK_ERROR_UNSUPPORTED		(1)
 // CV is read only
-#define LNCV_LACK_ERROR_READONLY (2)
+#define LNCV_LACK_ERROR_READONLY		(2)
 // Value out of range
-#define LNCV_LACK_ERROR_OUTOFRANGE (3)
+#define LNCV_LACK_ERROR_OUTOFRANGE		(3)
 // Everything OK
-#define LNCV_LACK_OK (127)
+#define LNCV_LACK_OK					(127)
 
 // the valid range for module addresses (CV0) as per the LNCV spec.
-#define LNCV_MIN_MODULEADDR (0)
-#define LNCV_MAX_MODULEADDR (65534)
+#define LNCV_MIN_MODULEADDR		(0)
+#define LNCV_MAX_MODULEADDR		(65534)
 
-#define LN_TX_RETRIES_MAX  25
+#define LN_TX_RETRIES_MAX		25
 
-constexpr uint8_t CALLBACK_FOR_ALL_OPCODES=0xFF;
 
-inline uint8_t lnPacketSize(const LnMsg * msg) {
-    return LOCONET_PACKET_SIZE(msg->sz.command, msg->sz.mesg_size);
+//==========================================================================
+//
+//		T Y P E   D E F I N I T I O N S
+//
+//==========================================================================
+
+typedef enum
+{
+	LN_IDLE = 0,
+	LN_NETWORK_BUSY,
+	LN_CD_BACKOFF,
+	LN_PRIO_BACKOFF,
+	LN_COLLISION,
+	LN_UNKNOWN_ERROR,
+	LN_RETRY_ERROR
+
+} LN_STATUS;
+
+
+//==========================================================================
+//
+//		M A C R O   D E F I N I T I O N S
+//
+//==========================================================================
+
+#define ADDR( hi, lo )		( (lo) | (( (hi) & 0x0F) << 7)    )
+
+
+//==========================================================================
+//
+//		C O N S T A N T   D E F I N I T I O N S
+//
+//==========================================================================
+
+constexpr int		LOCONET_BAUD			= 16667;	//	LocoNet BAUD Rate
+constexpr int		LOCONET_BREAK_BAUD		= 9600;		//	LocoNet BAUD Rate
+
+// CD Backoff starts after the Stop Bit (Bit 9) and has a minimum or 20 Bit Times
+// but initially starts with an additional 20 Bit Times
+constexpr uint8_t	LN_CARRIER_TICKS		= 20;	//	carrier detect backoff - all devices have to wait this
+constexpr uint8_t	LN_MASTER_DELAY			= 6;	//	non master devices have to wait this additionally
+constexpr uint8_t	LN_INITIAL_PRIO_DELAY	= 20;	//	initial attempt adds priority delay
+constexpr uint8_t	LN_BACKOFF_MIN			= (LN_CARRIER_TICKS + LN_MASTER_DELAY);		// not going below this
+constexpr uint8_t	LN_BACKOFF_INITIAL		= (LN_BACKOFF_MIN + LN_INITIAL_PRIO_DELAY);	// for the first normal tx attempt
+constexpr uint8_t	LN_BACKOFF_MAX			= (LN_BACKOFF_INITIAL + 10);				// lower priority is not supported
+constexpr uint8_t	LN_COLLISION_TICKS		= 15;	//	after collision the bus will be low for this number of ticks.
+
+// number of microseconds for one bit
+constexpr uint8_t	LocoNetTickTime			= 60;
+constexpr uint16_t	LocoNetRxByteMicros		= LocoNetTickTime * 10;	//	StartBit + 8 Data Bits + StopBit = 10 Bits
+
+// number of microseconds to remain in a collision state
+constexpr uint32_t	CollisionTimeoutIncrement	= 15 * LocoNetTickTime;
+
+// number of microseconds to remain in a CD BACKOFF state
+constexpr uint32_t	CDBackoffTimeoutIncrement	= LocoNetTickTime * LN_CARRIER_TICKS;
+
+constexpr uint8_t	CALLBACK_FOR_ALL_OPCODES	=	0xFF;
+
+
+//==========================================================================
+//
+//		G L O B A L   F U N C T I O N S
+//
+//==========================================================================
+
+inline uint8_t lnPacketSize( const LnMsg * msg )
+{
+	return( LOCONET_PACKET_SIZE( msg->sz.command, msg->sz.mesg_size ) );
 }
 
-#define ADDR(hi,lo)  (   (lo) | (( (hi) & 0x0F ) << 7)    )
 
-#define MAX_BACKEND_CONSUMERS  10
+//==========================================================================
+//
+//		C L A S S   D E F I N I T I O N S
+//
+//==========================================================================
 
-class LocoNetPhy: public LocoNetConsumer {
-    public:
-        LocoNetPhy(LocoNetBus * bus);
-        virtual bool begin();
-        virtual void end();
-        LN_STATUS send(LnMsg *txPacket);
-        LN_STATUS send(LnMsg *txPacket, uint8_t PrioDelay);
 
-        LnRxStats* getRxStats(void);
-        LnTxStats* getTxStats(void);
+////////////////////////////////////////////////////////////////////////
+//
+//	CLASS:	LocoNetBus
+//
+using LocoNetBus		=	Bus< LnMsg, LN_STATUS, LN_STATUS::LN_IDLE, MAX_BACKEND_CONSUMERS >;
 
-        const char* getStatusStr(LN_STATUS status);
-    
-        LN_STATUS onMessage(const LnMsg& msg);
 
-    protected:
-        void consume(uint8_t newByte);
+////////////////////////////////////////////////////////////////////////
+//
+//	CLASS:	LocoNetConsumer
+//
+//----------------------------------------------------------------------
+//
+//	The base class for all LocoNet message consumers.
+//
+//	There are two main categories of consumers:
+//		- LocoNet communication classes
+//		- LocoNet dispatcher classes
+//
+//	LocoNet communication classes will transport the bytes of a
+//	LocoNet message (send/receive)
+//
+//	LocoNet dispatcher will react on the content of a LocoNet message,
+//	like: sensor changed, switch request, ...
+//
+using LocoNetConsumer	=	Consumer< LnMsg, LN_STATUS >;
 
-        virtual LN_STATUS sendLocoNetPacketTry(uint8_t *packetData, uint8_t packetLen, unsigned char ucPrioDelay) = 0;
-        LocoNetMessageBuffer rxBuffer;
-        LnTxStats txStats;
 
-        LocoNetBus *bus;
+////////////////////////////////////////////////////////////////////////
+//
+//	CLASS:	LocoNetComm
+//
+//----------------------------------------------------------------------
+//
+//	This is the base class for all communication classes.
+//	Communication classes will split up into two categories,
+//	but all will send and receive LocoNet messages.
+//
+//	The first category are the classes that will handle the
+//	communication on a real "physical" LocoNet.
+//	All these classes will be derived from LocoNetPhy (see below).
+//
+//	The second category will handle the communication on different
+//	media like: USB, RS232 (serial), Ethernet, ...
+//	All these classes will be derived from LocoNetComm.
+//
+//----------------------------------------------------------------------
+//
+//	This base class will provide the basic principle for sending
+//	and receiving LocoNet messages.
+//
+//	To sending a LocoNet message the derived class must implement
+//	a "Send()" function.
+//
+//	To receive a LocoNet message and spread it to all participants
+//	on the bus the derived class must/should implement a kind of
+//	"Receive()" function. This receive function must call the provided
+//	function "consume()" for each received byte.
+//
+class LocoNetComm : public LocoNetConsumer
+{
+	public:
+		LocoNetComm( LocoNetBus *pBus );
 
+		virtual bool begin() = 0;
+		virtual void end() = 0;
+
+		virtual LN_STATUS send( LnMsg *pTxPacket ) = 0;
+
+		LN_STATUS onMessage( const LnMsg &msg );
+
+	protected:
+		LocoNetBus				*m_pBus;
+		LocoNetMessageBuffer	 m_rxBuffer;
+
+		void consume( uint8_t usNewByte );
 };
+
+
+////////////////////////////////////////////////////////////////////////
+//	CLASS:	LocoNetPhy
+//
+class LocoNetPhy: public LocoNetComm
+{
+	public:
+		LocoNetPhy( LocoNetBus *bus );
+
+		virtual bool begin();
+		virtual void end();
+
+		LN_STATUS send( LnMsg *txPacket );
+		LN_STATUS send( LnMsg *txPacket, uint8_t PrioDelay );
+
+		LnRxStats* getRxStats( void );
+		LnTxStats* getTxStats( void );
+
+		const char* getStatusStr( LN_STATUS status );
+
+		LN_STATUS onMessage( const LnMsg& msg );
+
+	protected:
+		virtual LN_STATUS sendLocoNetPacketTry(uint8_t *packetData, uint8_t packetLen, unsigned char ucPrioDelay) = 0;
+		LnTxStats txStats;
+};
+
 
 LnMsg makeLongAck(uint8_t replyToOpc, uint8_t ack);
 

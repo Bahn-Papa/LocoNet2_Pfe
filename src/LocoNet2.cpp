@@ -63,10 +63,24 @@
  *
  *****************************************************************************/
 
+
+//==========================================================================
+//
+//		I N C L U D E S
+//
+//==========================================================================
+
 #include <string.h>
 #include <stdio.h>
 
 #include "LocoNet2.h"
+
+
+//==========================================================================
+//
+//		G L O B A L   V A R I A B L E S
+//
+//==========================================================================
 
 const char * LoconetStatusStrings[] = {
 	"Idle",
@@ -78,8 +92,98 @@ const char * LoconetStatusStrings[] = {
 	"Retry Error"
 };
 
-LocoNetPhy::LocoNetPhy(LocoNetBus * bus) : bus(bus) {
-  bus->addConsumer(this);
+
+//==========================================================================
+//
+//		C L A S S   F U N C T I O N S
+//
+//==========================================================================
+
+
+////////////////////////////////////////////////////////////////////////
+//
+//	CLASS:	LocoNetComm
+//
+//----------------------------------------------------------------------
+//
+//	This is the base class for all communication classes.
+//	Communication classes will split up into two categories,
+//	but all will send and receive LocoNet messages.
+//
+//	The first category are the classes that will handle the
+//	communication on a real "physical" LocoNet.
+//	All these classes will be derived from LocoNetPhy (see below).
+//
+//	The second category will handle the communication on different
+//	media like: USB, RS232 (serial), Ethernet, ...
+//	All these classes will be derived from LocoNetComm.
+//
+//----------------------------------------------------------------------
+//
+//	This base class will provide the basic principle for sending
+//	and receiving LocoNet messages.
+//
+//	To sending a LocoNet message the derived class must implement
+//	a "Send()" function.
+//
+//	To receive a LocoNet message and spread it to all participants
+//	on the bus the derived class must/should implement a kind of
+//	"Receive()" function. This receive function must call the provided
+//	function "consume()" for each received byte.
+//
+////////////////////////////////////////////////////////////////////////
+
+
+//******************************************************************
+//	Constructor
+//------------------------------------------------------------------
+//
+LocoNetComm::LocoNetComm( LocoNetBus *pBus )
+{
+	m_pBus = pBus;
+
+	m_pBus->addConsumer( this );
+}
+
+
+//******************************************************************
+//	onMessage
+//------------------------------------------------------------------
+//
+LN_STATUS LocoNetComm::onMessage( const LnMsg& msg )
+{
+	LnMsg	copy = msg;
+
+	return( send( &copy ) );
+}
+
+
+//******************************************************************
+//	consume
+//------------------------------------------------------------------
+//
+void LocoNetComm::consume( uint8_t newByte )
+{
+	LnMsg * rxPacket = m_rxBuffer.addByte( newByte );
+
+	if( nullptr != rxPacket )
+	{
+		m_pBus->broadcast(*rxPacket, this);
+	}
+}
+
+
+////////////////////////////////////////////////////////////////////////
+//	CLASS: LocoNetPhy
+//
+
+//******************************************************************
+//	Constructor
+//------------------------------------------------------------------
+//
+LocoNetPhy::LocoNetPhy( LocoNetBus * bus )
+	:	LocoNetComm( bus )
+{
 }
 
 bool LocoNetPhy::begin() {
@@ -87,11 +191,6 @@ bool LocoNetPhy::begin() {
 }
 
 void LocoNetPhy::end() {
-}
-
-LN_STATUS LocoNetPhy::onMessage(const LnMsg& msg) {
-  LnMsg copy = msg;
-  return send(&copy);
 }
 
 const char* LocoNetPhy::getStatusStr(LN_STATUS Status) {
@@ -180,14 +279,6 @@ LnRxStats* LocoNetPhy::getRxStats() {
 
 LnTxStats* LocoNetPhy::getTxStats() {
   return &txStats;
-}
-
-void LocoNetPhy::consume(uint8_t newByte) {
-	LnMsg * rxPacket = rxBuffer.addByte(newByte);
-  
-	if (rxPacket != nullptr) {
-    bus->broadcast(*rxPacket, this);
-	}
 }
 
 
